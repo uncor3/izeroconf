@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{BrowserEvent, MdnsBrowser, MdnsService, ServiceType, TxtRecord};
+use crate::{BrowserEvent, DiscoveryTxtRecord, MdnsBrowser, MdnsService, ServiceType, TxtRecord};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -7,7 +7,7 @@ use std::time::Duration;
 struct Context {
     is_discovered: bool,
     timed_out: bool,
-    txt: Option<TxtRecord>,
+    txt: Option<DiscoveryTxtRecord>,
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn service_register_is_browsable() {
         let mut mtx = context.lock().unwrap();
 
         if mtx.is_discovered {
-            assert_eq!(txt, mtx.txt.take().unwrap());
+            assert_eq!(txt.to_map(), mtx.txt.take().unwrap().to_map());
             break;
         }
 

@@ -192,9 +192,12 @@ extern crate serde;
 extern crate derive_builder;
 #[macro_use]
 extern crate zeroconf_macros;
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "native-backend", target_os = "linux"))]
 extern crate avahi_sys;
-#[cfg(any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd"))]
+#[cfg(all(
+    feature = "native-backend",
+    any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd")
+))]
 extern crate bonjour_sys;
 #[macro_use]
 extern crate derive_getters;
@@ -209,13 +212,17 @@ extern crate derive_new;
 extern crate maplit;
 
 #[macro_use]
+#[cfg(feature = "native-backend")]
 mod macros;
+#[cfg(feature = "native-backend")]
 mod ffi;
 mod interface;
 mod service_type;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "apple-mobile-device-metadata")]
+mod apple_mobile;
 pub mod browser;
 pub mod error;
 pub mod event_loop;
@@ -223,45 +230,105 @@ pub mod prelude;
 pub mod service;
 pub mod txt_record;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "native-backend", target_os = "linux"))]
 pub mod avahi;
-#[cfg(any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd"))]
+#[cfg(all(
+    feature = "native-backend",
+    any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd")
+))]
 pub mod bonjour;
+#[cfg(feature = "pure-rust")]
+pub mod pure_rust;
 
-pub use browser::{BrowserEvent, ServiceBrowserCallback, ServiceDiscovery, ServiceRemoval};
+#[cfg(all(feature = "native-backend", target_os = "linux"))]
+pub use avahi::browser::AvahiMdnsBrowser;
+#[cfg(all(
+    feature = "native-backend",
+    any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd")
+))]
+pub use bonjour::browser::BonjourMdnsBrowser;
+pub use browser::{
+    BrowserEvent, DeviceDiscoveryMetadata, DeviceMetadataResolution, DiscoveryBackend,
+    DiscoveryTxtRecord, ServiceBrowserCallback, ServiceDiscovery, ServiceRemoval,
+};
 pub use interface::*;
+#[cfg(feature = "pure-rust")]
+pub use pure_rust::browser::PureRustMdnsBrowser;
 pub use service::{ServiceRegisteredCallback, ServiceRegistration};
 pub use service_type::*;
 
 /// Type alias for the platform-specific mDNS browser implementation
-#[cfg(target_os = "linux")]
+#[cfg(feature = "pure-rust")]
+pub type MdnsBrowser = pure_rust::browser::PureRustMdnsBrowser;
+#[cfg(all(
+    not(feature = "pure-rust"),
+    feature = "native-backend",
+    target_os = "linux"
+))]
 pub type MdnsBrowser = avahi::browser::AvahiMdnsBrowser;
 /// Type alias for the platform-specific mDNS browser implementation
-#[cfg(any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd"))]
+#[cfg(all(
+    not(feature = "pure-rust"),
+    feature = "native-backend",
+    any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd")
+))]
 pub type MdnsBrowser = bonjour::browser::BonjourMdnsBrowser;
 
 /// Type alias for the platform-specific mDNS service implementation
-#[cfg(target_os = "linux")]
+#[cfg(feature = "pure-rust")]
+pub type MdnsService = pure_rust::service::PureRustMdnsService;
+#[cfg(all(
+    not(feature = "pure-rust"),
+    feature = "native-backend",
+    target_os = "linux"
+))]
 pub type MdnsService = avahi::service::AvahiMdnsService;
 /// Type alias for the platform-specific mDNS service implementation
-#[cfg(any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd"))]
+#[cfg(all(
+    not(feature = "pure-rust"),
+    feature = "native-backend",
+    any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd")
+))]
 pub type MdnsService = bonjour::service::BonjourMdnsService;
 
 /// Type alias for the platform-specific structure responsible for polling the mDNS event loop
-#[cfg(target_os = "linux")]
+#[cfg(feature = "pure-rust")]
+pub type EventLoop = pure_rust::event_loop::PureRustEventLoop;
+#[cfg(all(
+    not(feature = "pure-rust"),
+    feature = "native-backend",
+    target_os = "linux"
+))]
 pub type EventLoop = avahi::event_loop::AvahiEventLoop;
 /// Type alias for the platform-specific structure responsible for polling the mDNS event loop
-#[cfg(any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd"))]
+#[cfg(all(
+    not(feature = "pure-rust"),
+    feature = "native-backend",
+    any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd")
+))]
 pub type EventLoop = bonjour::event_loop::BonjourEventLoop;
 
 /// Type alias for the platform-specific structure responsible for storing and accessing TXT
 /// record data
-#[cfg(target_os = "linux")]
+#[cfg(feature = "pure-rust")]
+pub type TxtRecord = pure_rust::txt_record::PureRustTxtRecord;
+#[cfg(all(
+    not(feature = "pure-rust"),
+    feature = "native-backend",
+    target_os = "linux"
+))]
 pub type TxtRecord = avahi::txt_record::AvahiTxtRecord;
 /// Type alias for the platform-specific structure responsible for storing and accessing TXT
 /// record data
-#[cfg(any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd"))]
+#[cfg(all(
+    not(feature = "pure-rust"),
+    feature = "native-backend",
+    any(target_vendor = "apple", target_vendor = "pc", target_os = "freebsd")
+))]
 pub type TxtRecord = bonjour::txt_record::BonjourTxtRecord;
+
+#[cfg(not(any(feature = "native-backend", feature = "pure-rust")))]
+compile_error!("enable either the native-backend or pure-rust feature");
 
 /// Result type for this library
 pub type Result<T> = std::result::Result<T, error::Error>;

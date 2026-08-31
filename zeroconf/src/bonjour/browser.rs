@@ -1,14 +1,19 @@
 //! Bonjour implementation for cross-platform browser
 
+use super::event_loop::BonjourEventLoop;
 use super::service_ref::{
     BrowseServicesParams, GetAddressInfoParams, ManagedDNSServiceRef, ServiceResolveParams,
 };
+use super::txt_record::BonjourTxtRecord;
 use super::txt_record_ref::ManagedTXTRecordRef;
 use super::{bonjour_util, constants};
 use crate::ffi::{AsRaw, FromRaw, c_str};
 use crate::prelude::*;
-use crate::{BrowserEvent, ServiceBrowserCallback, ServiceDiscovery, ServiceRemoval};
-use crate::{EventLoop, NetworkInterface, Result, ServiceType, TxtRecord};
+use crate::{
+    BrowserEvent, DeviceMetadataResolution, DiscoveryBackend, DiscoveryTxtRecord,
+    ServiceBrowserCallback, ServiceDiscovery, ServiceRemoval,
+};
+use crate::{NetworkInterface, Result, ServiceType};
 #[cfg(target_vendor = "pc")]
 use bonjour_sys::sockaddr_in;
 use bonjour_sys::{DNSServiceErrorType, DNSServiceFlags, DNSServiceRef};
@@ -19,6 +24,8 @@ use std::any::Any;
 use std::ffi::CString;
 use std::fmt::{self, Formatter};
 use std::net::IpAddr;
+#[cfg(feature = "apple-mobile-device-metadata")]
+use std::net::SocketAddr;
 use std::ptr;
 use std::sync::{Arc, Mutex};
 
@@ -33,7 +40,23 @@ pub struct BonjourMdnsBrowser {
 unsafe impl Send for BonjourMdnsBrowser {}
 unsafe impl Sync for BonjourMdnsBrowser {}
 
+impl BonjourMdnsBrowser {
+    pub fn set_device_metadata_resolution(&mut self, resolution: DeviceMetadataResolution) {
+        self.context.metadata_resolution = resolution;
+    }
+
+    pub fn device_metadata_resolution(&self) -> DeviceMetadataResolution {
+        self.context.metadata_resolution
+    }
+}
+
 impl TMdnsBrowser for BonjourMdnsBrowser {
+    type EventLoop = BonjourEventLoop;
+
+    fn backend() -> DiscoveryBackend {
+        DiscoveryBackend::Bonjour
+    }
+
     fn new(service_type: ServiceType) -> Self {
         Self {
             service: Arc::default(),
@@ -63,7 +86,8 @@ impl TMdnsBrowser for BonjourMdnsBrowser {
         self.context.user_context.as_ref().map(|c| c.as_ref())
     }
 
-    fn browse_services(&mut self) -> Result<EventLoop> {
+    fn browse_services(&mut self) -> Result<Self::EventLoop> {
+        info!("Using Bonjour backend for mDNS service browsing");
         debug!("Browsing services: {:?}", self);
 
         let mut service_lock = self
@@ -82,7 +106,7 @@ impl TMdnsBrowser for BonjourMdnsBrowser {
 
         unsafe { service_lock.browse_services(browse_params)? };
 
-        Ok(EventLoop::new(self.service.clone()))
+        Ok(BonjourEventLoop::new(self.service.clone()))
     }
 }
 
@@ -93,7 +117,8 @@ struct BonjourBrowserContext {
     resolved_kind: Option<String>,
     resolved_domain: Option<String>,
     resolved_port: u16,
-    resolved_txt: Option<TxtRecord>,
+    resolved_txt: Option<DiscoveryTxtRecord>,
+    metadata_resolution: DeviceMetadataResolution,
     user_context: Option<Arc<dyn Any + Send + Sync>>,
 }
 
@@ -248,9 +273,10 @@ unsafe fn handle_resolve(
     ctx.resolved_port = port;
 
     ctx.resolved_txt = if txt_len > 1 {
-        Some(TxtRecord::from(unsafe {
-            ManagedTXTRecordRef::clone_raw(txt_record, txt_len)?
-        }))
+        Some(DiscoveryTxtRecord::from(
+            BonjourTxtRecord::from(unsafe { ManagedTXTRecordRef::clone_raw(txt_record, txt_len)? })
+                .to_map(),
+        ))
     } else {
         None
     };
@@ -272,7 +298,7 @@ unsafe fn handle_resolve(
 unsafe extern "system" fn get_address_info_callback(
     _sd_ref: DNSServiceRef,
     _flags: DNSServiceFlags,
-    _interface_index: u32,
+    interface_index: u32,
     error: DNSServiceErrorType,
     hostname: *const c_char,
     address: *const bonjour_sys::sockaddr,
@@ -280,7 +306,9 @@ unsafe extern "system" fn get_address_info_callback(
     context: *mut c_void,
 ) {
     let ctx = unsafe { BonjourBrowserContext::from_raw(context) };
-    if let Err(e) = unsafe { handle_get_address_info(ctx, error, address, hostname) } {
+    if let Err(e) =
+        unsafe { handle_get_address_info(ctx, error, interface_index, address, hostname) }
+    {
         ctx.invoke_callback(Err(e));
     }
 }
@@ -288,6 +316,7 @@ unsafe extern "system" fn get_address_info_callback(
 unsafe fn handle_get_address_info(
     ctx: &mut BonjourBrowserContext,
     error: DNSServiceErrorType,
+    _interface_index: u32,
     address: *const bonjour_sys::sockaddr,
     hostname: *const c_char,
 ) -> Result<()> {
@@ -344,16 +373,34 @@ unsafe fn handle_get_address_info(
         .take()
         .ok_or("could not get name from BonjourBrowserContext")?;
 
-    let result = ServiceDiscovery::builder()
+    let service_type = bonjour_util::parse_regtype(&kind)?;
+    #[cfg(feature = "apple-mobile-device-metadata")]
+    let device_metadata = ip.parse::<IpAddr>().ok().and_then(|address| {
+        let socket_address = match address {
+            IpAddr::V4(address) => SocketAddr::new(IpAddr::V4(address), port),
+            IpAddr::V6(address) => {
+                std::net::SocketAddrV6::new(address, port, 0, _interface_index).into()
+            }
+        };
+        crate::apple_mobile::resolve_metadata(
+            &service_type,
+            [socket_address],
+            ctx.metadata_resolution,
+        )
+    });
+
+    let mut builder = ServiceDiscovery::builder();
+    builder
         .name(name)
-        .service_type(bonjour_util::parse_regtype(&kind)?)
+        .service_type(service_type)
         .domain(domain)
         .host_name(hostname)
         .address(ip)
         .port(port)
-        .txt(ctx.resolved_txt.take())
-        .build()
-        .expect("could not build ServiceResolution");
+        .txt(ctx.resolved_txt.take());
+    #[cfg(feature = "apple-mobile-device-metadata")]
+    builder.device_metadata(device_metadata);
+    let result = builder.build().expect("could not build ServiceResolution");
 
     ctx.invoke_callback(Ok(BrowserEvent::Add(result)));
 

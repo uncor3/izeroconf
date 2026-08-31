@@ -115,6 +115,14 @@ impl PartialEq for AvahiTxtRecord {
     }
 }
 
+impl Eq for AvahiTxtRecord {}
+
+impl std::fmt::Debug for AvahiTxtRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
 pub struct Iter<'a> {
     node: Option<AvahiStringListNode<'a>>,
 }

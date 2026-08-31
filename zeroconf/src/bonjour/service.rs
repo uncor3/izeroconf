@@ -1,13 +1,14 @@
 //! Bonjour implementation for cross-platform service.
 
+use super::event_loop::BonjourEventLoop;
 use super::service_ref::{ManagedDNSServiceRef, RegisterServiceParams};
+use super::txt_record::BonjourTxtRecord;
 use super::{bonjour_util, constants};
 use crate::ffi::c_str::{self, AsCChars};
 use crate::ffi::{AsRaw, FromRaw, UnwrapOrNull};
 use crate::prelude::*;
 use crate::{
-    EventLoop, NetworkInterface, Result, ServiceRegisteredCallback, ServiceRegistration,
-    ServiceType, TxtRecord,
+    NetworkInterface, Result, ServiceRegisteredCallback, ServiceRegistration, ServiceType,
 };
 use bonjour_sys::{DNSServiceErrorType, DNSServiceFlags, DNSServiceRef};
 use libc::{c_char, c_void};
@@ -24,7 +25,7 @@ pub struct BonjourMdnsService {
     domain: Option<CString>,
     host: Option<CString>,
     interface_index: u32,
-    txt_record: Option<TxtRecord>,
+    txt_record: Option<BonjourTxtRecord>,
     context: Box<BonjourServiceContext>,
 }
 
@@ -32,6 +33,9 @@ unsafe impl Send for BonjourMdnsService {}
 unsafe impl Sync for BonjourMdnsService {}
 
 impl TMdnsService for BonjourMdnsService {
+    type EventLoop = BonjourEventLoop;
+    type TxtRecord = BonjourTxtRecord;
+
     fn new(service_type: ServiceType, port: u16) -> Self {
         Self {
             service: Arc::default(),
@@ -80,11 +84,11 @@ impl TMdnsService for BonjourMdnsService {
         self.host.as_ref().map(c_str::to_str)
     }
 
-    fn set_txt_record(&mut self, txt_record: TxtRecord) {
+    fn set_txt_record(&mut self, txt_record: Self::TxtRecord) {
         self.txt_record = Some(txt_record);
     }
 
-    fn txt_record(&self) -> Option<&TxtRecord> {
+    fn txt_record(&self) -> Option<&Self::TxtRecord> {
         self.txt_record.as_ref()
     }
 
@@ -100,7 +104,7 @@ impl TMdnsService for BonjourMdnsService {
         self.context.user_context.as_ref().map(|c| c.as_ref())
     }
 
-    fn register(&mut self) -> Result<EventLoop> {
+    fn register(&mut self) -> Result<Self::EventLoop> {
         debug!("Registering service: {:?}", self);
 
         let txt_len = self
@@ -136,7 +140,7 @@ impl TMdnsService for BonjourMdnsService {
 
         unsafe { service_lock.register_service(register_params)? };
 
-        Ok(EventLoop::new(self.service.clone()))
+        Ok(BonjourEventLoop::new(self.service.clone()))
     }
 }
 

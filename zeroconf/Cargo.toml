@@ -18,6 +18,12 @@ categories = [
 ]
 documentation = "https://docs.rs/zeroconf"
 
+[features]
+default = ["native-backend"]
+native-backend = ["dep:avahi-sys", "dep:bonjour-sys"]
+pure-rust = ["dep:mdns-sd"]
+apple-mobile-device-metadata = ["pure-rust", "dep:plist"]
+
 [dependencies]
 serde = { version = "1.0.188", features = ["derive"], optional = true }
 derive-getters = "0.3.0"
@@ -26,6 +32,8 @@ derive-new = "0.5.9"
 log = "0.4.20"
 libc = "0.2.148"
 zeroconf-macros = { path = "../zeroconf-macros", version = "0.2.0" }
+mdns-sd = { version = "0.21.0", optional = true }
+plist = { version = "1.8.0", optional = true }
 
 [dev-dependencies]
 env_logger = "0.10.0"
@@ -34,16 +42,16 @@ serde_json = "1.0.107"
 clap = { version = "4.4.4", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
-avahi-sys = "0.10.1"
+avahi-sys = { version = "0.10.1", optional = true }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-bonjour-sys = { version = "0.4.0" }
+bonjour-sys = { version = "0.4.0", optional = true }
 
 [target.'cfg(target_vendor = "pc")'.dependencies]
-bonjour-sys = { version = "0.4.0" }
+bonjour-sys = { version = "0.4.0", optional = true }
 
 [target.'cfg(target_os = "freebsd")'.dependencies]
-bonjour-sys = { version = "0.4.0" }
+bonjour-sys = { version = "0.4.0", optional = true }
 
 [package.metadata.docs.rs]
 default-target = "x86_64-unknown-linux-gnu"

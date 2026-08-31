@@ -5,12 +5,13 @@ use super::client::{ManagedAvahiClient, ManagedAvahiClientParams};
 use super::entry_group::{
     AddServiceParams, AddServiceSubtypeParams, ManagedAvahiEntryGroup, ManagedAvahiEntryGroupParams,
 };
+use super::event_loop::AvahiEventLoop;
 use super::poll::ManagedAvahiSimplePoll;
+use super::txt_record::AvahiTxtRecord;
 use crate::ffi::{AsRaw, FromRaw, UnwrapOrNull, c_str};
 use crate::prelude::*;
 use crate::{
-    EventLoop, NetworkInterface, Result, ServiceRegisteredCallback, ServiceRegistration,
-    ServiceType, TxtRecord,
+    NetworkInterface, Result, ServiceRegisteredCallback, ServiceRegistration, ServiceType,
 };
 use avahi_sys::{
     AvahiClient, AvahiClientFlags, AvahiClientState, AvahiEntryGroup, AvahiEntryGroupState,
@@ -36,6 +37,9 @@ unsafe impl Send for AvahiMdnsService {}
 unsafe impl Sync for AvahiMdnsService {}
 
 impl TMdnsService for AvahiMdnsService {
+    type EventLoop = AvahiEventLoop;
+    type TxtRecord = AvahiTxtRecord;
+
     fn new(service_type: ServiceType, port: u16) -> Self {
         let kind = avahi_util::format_service_type(&service_type);
 
@@ -90,11 +94,11 @@ impl TMdnsService for AvahiMdnsService {
         self.context.host.as_ref().map(c_str::to_str)
     }
 
-    fn set_txt_record(&mut self, txt_record: TxtRecord) {
+    fn set_txt_record(&mut self, txt_record: Self::TxtRecord) {
         self.context.txt_record = txt_record.into()
     }
 
-    fn txt_record(&self) -> Option<&TxtRecord> {
+    fn txt_record(&self) -> Option<&Self::TxtRecord> {
         self.context.txt_record.as_ref()
     }
 
@@ -110,7 +114,7 @@ impl TMdnsService for AvahiMdnsService {
         self.context.user_context.as_ref().map(|c| c.as_ref())
     }
 
-    fn register(&mut self) -> Result<EventLoop> {
+    fn register(&mut self) -> Result<Self::EventLoop> {
         debug!("Registering service: {:?}", self);
 
         self.poll = Some(Arc::new(unsafe { ManagedAvahiSimplePoll::new() }?));
@@ -138,7 +142,7 @@ impl TMdnsService for AvahiMdnsService {
             }
         }
 
-        Ok(EventLoop::new(
+        Ok(AvahiEventLoop::new(
             self.poll
                 .as_ref()
                 .ok_or("could not get poll as ref")?
@@ -155,7 +159,7 @@ struct AvahiServiceContext {
     sub_types: Vec<CString>,
     port: u16,
     group: Option<ManagedAvahiEntryGroup>,
-    txt_record: Option<TxtRecord>,
+    txt_record: Option<AvahiTxtRecord>,
     interface_index: AvahiIfIndex,
     domain: Option<CString>,
     host: Option<CString>,

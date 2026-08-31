@@ -106,6 +106,14 @@ impl PartialEq for BonjourTxtRecord {
     }
 }
 
+impl Eq for BonjourTxtRecord {}
+
+impl std::fmt::Debug for BonjourTxtRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(Iter::new(self)).finish()
+    }
+}
+
 /// An `Iterator` that allows iteration over a [`BonjourTxtRecord`] similar to a `HashMap`.
 #[derive(new)]
 pub struct Iter<'a> {

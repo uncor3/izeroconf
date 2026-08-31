@@ -8,7 +8,9 @@ use serde::ser::SerializeMap;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
-use std::fmt::{self, Debug};
+#[cfg(feature = "serde")]
+use std::fmt;
+use std::fmt::Debug;
 #[cfg(feature = "serde")]
 use std::marker::PhantomData;
 
@@ -80,8 +82,6 @@ impl From<HashMap<&str, &str>> for TxtRecord {
     }
 }
 
-impl Eq for TxtRecord {}
-
 impl Default for TxtRecord {
     fn default() -> Self {
         Self::new()
@@ -138,14 +138,6 @@ impl<'de> Deserialize<'de> for TxtRecord {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_map(TxtRecordVisitor::new())
-    }
-}
-
-impl Debug for TxtRecord {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TxtRecord")
-            .field("data", &self.to_map())
-            .finish()
     }
 }
 

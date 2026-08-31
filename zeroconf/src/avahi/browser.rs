@@ -2,6 +2,7 @@
 
 use super::avahi_util;
 use super::client::{ManagedAvahiClient, ManagedAvahiClientParams};
+use super::event_loop::AvahiEventLoop;
 use super::poll::ManagedAvahiSimplePoll;
 use super::raw_browser::{ManagedAvahiServiceBrowser, ManagedAvahiServiceBrowserParams};
 use super::{
@@ -14,8 +15,8 @@ use crate::Result;
 use crate::ffi::{AsRaw, FromRaw, c_str};
 use crate::prelude::*;
 use crate::{
-    BrowserEvent, EventLoop, NetworkInterface, ServiceBrowserCallback, ServiceDiscovery,
-    ServiceRemoval, ServiceType, TxtRecord,
+    BrowserEvent, DeviceMetadataResolution, DiscoveryBackend, DiscoveryTxtRecord, NetworkInterface,
+    ServiceBrowserCallback, ServiceDiscovery, ServiceRemoval, ServiceType,
 };
 use avahi_sys::{
     AvahiAddress, AvahiBrowserEvent, AvahiClient, AvahiClientFlags, AvahiClientState, AvahiIfIndex,
@@ -25,6 +26,8 @@ use avahi_sys::{
 use libc::{c_char, c_void};
 use std::any::Any;
 use std::ffi::CString;
+#[cfg(feature = "apple-mobile-device-metadata")]
+use std::net::{IpAddr, SocketAddr, SocketAddrV6};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::{fmt, ptr};
@@ -39,7 +42,23 @@ pub struct AvahiMdnsBrowser {
 unsafe impl Send for AvahiMdnsBrowser {}
 unsafe impl Sync for AvahiMdnsBrowser {}
 
+impl AvahiMdnsBrowser {
+    pub fn set_device_metadata_resolution(&mut self, resolution: DeviceMetadataResolution) {
+        self.context.metadata_resolution = resolution;
+    }
+
+    pub fn device_metadata_resolution(&self) -> DeviceMetadataResolution {
+        self.context.metadata_resolution
+    }
+}
+
 impl TMdnsBrowser for AvahiMdnsBrowser {
+    type EventLoop = AvahiEventLoop;
+
+    fn backend() -> DiscoveryBackend {
+        DiscoveryBackend::Avahi
+    }
+
     fn new(service_type: ServiceType) -> Self {
         Self {
             client: None,
@@ -47,6 +66,7 @@ impl TMdnsBrowser for AvahiMdnsBrowser {
             context: Box::new(AvahiBrowserContext::new(
                 c_string!(avahi_util::format_browser_type(&service_type)),
                 avahi_sys::AVAHI_IF_UNSPEC,
+                DeviceMetadataResolution::Disabled,
             )),
         }
     }
@@ -71,7 +91,8 @@ impl TMdnsBrowser for AvahiMdnsBrowser {
         self.context.user_context.as_ref().map(|c| c.as_ref())
     }
 
-    fn browse_services(&mut self) -> Result<EventLoop> {
+    fn browse_services(&mut self) -> Result<Self::EventLoop> {
+        info!("Using Avahi backend for mDNS service browsing");
         debug!("Browsing services: {:?}", self);
 
         self.poll = Some(Arc::new(unsafe { ManagedAvahiSimplePoll::new() }?));
@@ -99,7 +120,7 @@ impl TMdnsBrowser for AvahiMdnsBrowser {
             }
         }
 
-        Ok(EventLoop::new(
+        Ok(AvahiEventLoop::new(
             self.poll
                 .as_ref()
                 .ok_or("could not get poll as ref")?
@@ -117,10 +138,15 @@ struct AvahiBrowserContext {
     interface_index: AvahiIfIndex,
     kind: CString,
     browser: Option<ManagedAvahiServiceBrowser>,
+    metadata_resolution: DeviceMetadataResolution,
 }
 
 impl AvahiBrowserContext {
-    fn new(kind: CString, interface_index: AvahiIfIndex) -> Self {
+    fn new(
+        kind: CString,
+        interface_index: AvahiIfIndex,
+        metadata_resolution: DeviceMetadataResolution,
+    ) -> Self {
         Self {
             client: None,
             resolvers: ServiceResolverSet::default(),
@@ -129,6 +155,7 @@ impl AvahiBrowserContext {
             interface_index,
             kind,
             browser: None,
+            metadata_resolution,
         }
     }
 
@@ -276,7 +303,7 @@ unsafe fn handle_browser_remove(
 
 unsafe extern "C" fn resolve_callback(
     resolver: *mut AvahiServiceResolver,
-    _interface: AvahiIfIndex,
+    interface: AvahiIfIndex,
     _protocol: AvahiProtocol,
     event: AvahiResolverEvent,
     name: *const c_char,
@@ -307,6 +334,7 @@ unsafe extern "C" fn resolve_callback(
             let result = unsafe {
                 handle_resolver_found(
                     context,
+                    interface,
                     c_str::raw_to_str(host_name),
                     addr,
                     name,
@@ -330,6 +358,7 @@ unsafe extern "C" fn resolve_callback(
 #[allow(clippy::too_many_arguments)]
 unsafe fn handle_resolver_found(
     context: &AvahiBrowserContext,
+    _interface: AvahiIfIndex,
     host_name: &str,
     addr: *const AvahiAddress,
     name: &str,
@@ -343,20 +372,45 @@ unsafe fn handle_resolver_found(
     let txt = if txt.is_null() {
         None
     } else {
-        Some(TxtRecord::from(unsafe {
-            ManagedAvahiStringList::clone_raw(txt)
-        }))
+        Some(DiscoveryTxtRecord::from(
+            crate::avahi::txt_record::AvahiTxtRecord::from(unsafe {
+                ManagedAvahiStringList::clone_raw(txt)
+            })
+            .to_map(),
+        ))
     };
 
-    let result = ServiceDiscovery::builder()
+    let service_type = ServiceType::from_str(kind)?;
+    #[cfg(feature = "apple-mobile-device-metadata")]
+    let device_metadata = address.parse::<IpAddr>().ok().and_then(|address| {
+        let socket_address = match address {
+            IpAddr::V4(address) => SocketAddr::new(IpAddr::V4(address), port),
+            IpAddr::V6(address) => SocketAddr::V6(SocketAddrV6::new(
+                address,
+                port,
+                0,
+                u32::try_from(_interface).unwrap_or_default(),
+            )),
+        };
+        crate::apple_mobile::resolve_metadata(
+            &service_type,
+            [socket_address],
+            context.metadata_resolution,
+        )
+    });
+
+    let mut builder = ServiceDiscovery::builder();
+    builder
         .name(name.to_string())
-        .service_type(ServiceType::from_str(kind)?)
+        .service_type(service_type)
         .domain(domain.to_string())
         .host_name(host_name.to_string())
         .address(address)
         .port(port)
-        .txt(txt)
-        .build()?;
+        .txt(txt);
+    #[cfg(feature = "apple-mobile-device-metadata")]
+    builder.device_metadata(device_metadata);
+    let result = builder.build()?;
 
     debug!("Service resolved: {:?}", result);
 
