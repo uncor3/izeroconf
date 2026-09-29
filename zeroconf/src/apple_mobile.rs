@@ -6,8 +6,6 @@ use std::io::{Cursor, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Instant;
 
-const MAX_PLIST_SIZE: usize = 1024 * 1024;
-const MAX_VALUE_SIZE: usize = 4096;
 const LOCKDOWND_PORT: u16 = 62078;
 
 pub(crate) fn resolve_metadata(
@@ -58,60 +56,50 @@ fn resolve_from_stream(
     stream: &mut TcpStream,
     deadline: Instant,
 ) -> Option<DeviceDiscoveryMetadata> {
-    let mut builder = DeviceDiscoveryMetadata::builder();
+    let values = match get_lockdown_values(stream, deadline) {
+        Ok(values) => values,
+        Err(error) => {
+            debug!("lockdownd GetValue failed: {}", error);
+            return None;
+        }
+    };
 
-    read_value(stream, deadline, "DeviceName", |value| {
-        builder.device_name(Some(value));
-    });
-    read_value(stream, deadline, "ProductType", |value| {
-        builder.product_type(Some(value));
-    });
-    read_value(stream, deadline, "ProductVersion", |value| {
-        builder.product_version(Some(value));
-    });
-    read_value(stream, deadline, "BuildVersion", |value| {
-        builder.build_version(Some(value));
-    });
-    read_value(stream, deadline, "WiFiAddress", |value| {
-        builder.wifi_address(Some(value));
-    });
+    let value = |key: &str| {
+        values
+            .get(key)
+            .and_then(Value::as_string)
+            .map(ToOwned::to_owned)
+    };
+
+    let mut builder = DeviceDiscoveryMetadata::builder();
+    builder
+        .device_name(value("DeviceName"))
+        .product_type(value("ProductType"))
+        .product_version(value("ProductVersion"))
+        .build_version(value("BuildVersion"))
+        .wifi_address(value("WiFiAddress"));
 
     let metadata = builder.build().ok()?;
     (!metadata.is_empty()).then_some(metadata)
 }
 
-fn read_value(
-    stream: &mut TcpStream,
-    deadline: Instant,
-    key: &str,
-    mut set_value: impl FnMut(String),
-) {
-    let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-        return;
-    };
+fn get_lockdown_values(stream: &mut TcpStream, deadline: Instant) -> LockdownResult<Dictionary> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .ok_or(LockdownError::Protocol("metadata resolution timed out"))?;
     if remaining.is_zero() {
-        return;
+        return Err(LockdownError::Protocol("metadata resolution timed out"));
     }
-    if let Err(error) = stream.set_read_timeout(Some(remaining)) {
-        debug!("could not set lockdownd read timeout: {}", error);
-        return;
-    }
-    if let Err(error) = stream.set_write_timeout(Some(remaining)) {
-        debug!("could not set lockdownd write timeout: {}", error);
-        return;
-    }
+    stream
+        .set_read_timeout(Some(remaining))
+        .map_err(LockdownError::Io)?;
+    stream
+        .set_write_timeout(Some(remaining))
+        .map_err(LockdownError::Io)?;
 
-    match get_lockdown_value(stream, key) {
-        Ok(value) => set_value(value),
-        Err(error) => debug!("lockdownd GetValue for {} failed: {}", key, error),
-    }
-}
-
-fn get_lockdown_value(stream: &mut TcpStream, key: &str) -> LockdownResult<String> {
     let mut request = Dictionary::new();
-    request.insert("Label".to_string(), Value::String("zeroconf".to_string()));
+    request.insert("Label".to_string(), Value::String("izeroconf".to_string()));
     request.insert("Request".to_string(), Value::String("GetValue".to_string()));
-    request.insert("Key".to_string(), Value::String(key.to_string()));
     write_plist_frame(stream, &Value::Dictionary(request))?;
 
     let response = read_plist_frame(stream)?;
@@ -123,20 +111,16 @@ fn get_lockdown_value(stream: &mut TcpStream, key: &str) -> LockdownResult<Strin
     }
     let value = dictionary
         .get("Value")
-        .and_then(Value::as_string)
-        .ok_or(LockdownError::Protocol("response has no string Value"))?;
-    if value.len() > MAX_VALUE_SIZE {
-        return Err(LockdownError::Protocol("response value is too large"));
-    }
-    Ok(value.to_string())
+        .and_then(Value::as_dictionary)
+        .ok_or(LockdownError::Protocol(
+            "response Value is not a dictionary",
+        ))?;
+    Ok(value.clone())
 }
 
 fn write_plist_frame(stream: &mut TcpStream, value: &Value) -> LockdownResult<()> {
     let mut payload = Vec::new();
     plist::to_writer_xml(&mut payload, value).map_err(LockdownError::Plist)?;
-    if payload.len() > MAX_PLIST_SIZE {
-        return Err(LockdownError::Protocol("request plist is too large"));
-    }
     stream
         .write_all(&(payload.len() as u32).to_be_bytes())
         .map_err(LockdownError::Io)?;
@@ -147,9 +131,6 @@ fn read_plist_frame(stream: &mut TcpStream) -> LockdownResult<Value> {
     let mut length = [0u8; 4];
     stream.read_exact(&mut length).map_err(LockdownError::Io)?;
     let length = u32::from_be_bytes(length) as usize;
-    if length == 0 || length > MAX_PLIST_SIZE {
-        return Err(LockdownError::Protocol("invalid response plist length"));
-    }
     let mut payload = vec![0u8; length];
     stream.read_exact(&mut payload).map_err(LockdownError::Io)?;
     Value::from_reader(Cursor::new(payload)).map_err(LockdownError::Plist)
@@ -183,7 +164,7 @@ mod tests {
     use std::thread;
 
     #[test]
-    fn get_value_uses_lockdown_framing() {
+    fn get_values_uses_keyless_lockdown_request() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
@@ -194,43 +175,26 @@ mod tests {
                 request.get("Request").and_then(Value::as_string),
                 Some("GetValue")
             );
-            assert_eq!(
-                request.get("Key").and_then(Value::as_string),
-                Some("DeviceName")
-            );
+            assert!(!request.contains_key("Key"));
+            assert!(!request.contains_key("Domain"));
 
-            let mut response = Dictionary::new();
-            response.insert(
-                "Value".to_string(),
+            let mut values = Dictionary::new();
+            values.insert(
+                "DeviceName".to_string(),
                 Value::String("Test iPhone".to_string()),
             );
+            let mut response = Dictionary::new();
+            response.insert("Value".to_string(), Value::Dictionary(values));
             write_plist_frame(&mut stream, &Value::Dictionary(response)).unwrap();
         });
 
         let mut stream = TcpStream::connect(address).unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        let values = get_lockdown_values(&mut stream, deadline).unwrap();
         assert_eq!(
-            get_lockdown_value(&mut stream, "DeviceName").unwrap(),
-            "Test iPhone"
+            values.get("DeviceName").and_then(Value::as_string),
+            Some("Test iPhone")
         );
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn rejects_oversized_frame_before_allocation() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .write_all(&((MAX_PLIST_SIZE + 1) as u32).to_be_bytes())
-                .unwrap();
-        });
-
-        let mut stream = TcpStream::connect(address).unwrap();
-        assert!(matches!(
-            read_plist_frame(&mut stream),
-            Err(LockdownError::Protocol(_))
-        ));
         server.join().unwrap();
     }
 
