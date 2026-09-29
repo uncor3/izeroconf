@@ -18,8 +18,9 @@ use crate::{NetworkInterface, Result, ServiceType};
 use bonjour_sys::sockaddr_in;
 use bonjour_sys::{DNSServiceErrorType, DNSServiceFlags, DNSServiceRef};
 #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
-use libc::sockaddr_in;
 use libc::{c_char, c_uchar, c_void};
+#[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+use libc::{sockaddr_in, sockaddr_in6};
 use std::any::Any;
 use std::ffi::CString;
 use std::fmt::{self, Formatter};
@@ -336,14 +337,8 @@ unsafe fn handle_get_address_info(
     // on macOS the bytes are swapped for the port
     let port: u16 = ctx.resolved_port.to_be();
 
-    // on macOS the bytes are swapped for the ip
     #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
-    let ip = {
-        let address = address as *const sockaddr_in;
-        assert_not_null!(address);
-        let s_addr = unsafe { (*address).sin_addr.s_addr.to_le_bytes() };
-        IpAddr::from(s_addr).to_string()
-    };
+    let ip = unsafe { ip_addr_from_sockaddr(address)? }.to_string();
 
     #[cfg(target_vendor = "pc")]
     let ip = {
@@ -405,4 +400,64 @@ unsafe fn handle_get_address_info(
     ctx.invoke_callback(Ok(BrowserEvent::Add(result)));
 
     Ok(())
+}
+
+#[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+unsafe fn ip_addr_from_sockaddr(address: *const bonjour_sys::sockaddr) -> Result<IpAddr> {
+    // DNSServiceGetAddrInfo can return either family. Reading an IPv6 sockaddr as
+    // sockaddr_in produces an invalid IPv4 address (often 0.0.0.0 on macOS).
+    let sockaddr = unsafe { (address as *const libc::sockaddr).as_ref() }
+        .ok_or("DNSServiceGetAddrInfo returned a null address")?;
+    match i32::from(sockaddr.sa_family) {
+        libc::AF_INET => {
+            let ipv4 = unsafe { &*(address as *const sockaddr_in) };
+            Ok(IpAddr::from(ipv4.sin_addr.s_addr.to_ne_bytes()))
+        }
+        libc::AF_INET6 => {
+            let ipv6 = unsafe { &*(address as *const sockaddr_in6) };
+            Ok(IpAddr::from(ipv6.sin6_addr.s6_addr))
+        }
+        family => Err(format!("unsupported Bonjour address family: {family}").into()),
+    }
+}
+
+#[cfg(all(test, target_vendor = "apple"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_ipv4_sockaddr() {
+        let mut address: sockaddr_in = unsafe { std::mem::zeroed() };
+        address.sin_len = std::mem::size_of::<sockaddr_in>() as u8;
+        address.sin_family = libc::AF_INET as u8;
+        address.sin_addr.s_addr = u32::from_ne_bytes([192, 0, 2, 42]);
+
+        let ip =
+            unsafe { ip_addr_from_sockaddr(&address as *const _ as *const bonjour_sys::sockaddr) };
+        assert_eq!(ip.unwrap().to_string(), "192.0.2.42");
+    }
+
+    #[test]
+    fn decodes_ipv6_sockaddr_without_interpreting_it_as_ipv4() {
+        let mut address: sockaddr_in6 = unsafe { std::mem::zeroed() };
+        address.sin6_len = std::mem::size_of::<sockaddr_in6>() as u8;
+        address.sin6_family = libc::AF_INET6 as u8;
+        address.sin6_addr.s6_addr = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
+        let ip =
+            unsafe { ip_addr_from_sockaddr(&address as *const _ as *const bonjour_sys::sockaddr) };
+        assert_eq!(ip.unwrap().to_string(), "fe80::1");
+    }
+
+    #[test]
+    fn rejects_null_and_unknown_address_families() {
+        assert!(unsafe { ip_addr_from_sockaddr(std::ptr::null()) }.is_err());
+
+        let mut address: sockaddr_in = unsafe { std::mem::zeroed() };
+        address.sin_family = libc::AF_UNSPEC as u8;
+        assert!(
+            unsafe { ip_addr_from_sockaddr(&address as *const _ as *const bonjour_sys::sockaddr) }
+                .is_err()
+        );
+    }
 }
