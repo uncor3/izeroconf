@@ -464,6 +464,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
+name = "izeroconf"
+version = "0.19.0"
+dependencies = [
+ "avahi-sys",
+ "bonjour-sys",
+ "clap",
+ "derive-getters",
+ "derive-new",
+ "derive_builder",
+ "env_logger",
+ "libc",
+ "log",
+ "maplit",
+ "mdns-sd",
+ "plist",
+ "serde",
+ "serde_json",
+ "zeroconf-macros",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -987,34 +1008,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
-name = "zeroconf"
-version = "0.18.0"
-dependencies = [
- "avahi-sys",
- "bonjour-sys",
- "clap",
- "derive-getters",
- "derive-new",
- "derive_builder",
- "env_logger",
- "libc",
- "log",
- "maplit",
- "mdns-sd",
- "plist",
- "serde",
- "serde_json",
- "zeroconf-macros",
-]
-
-[[package]]
 name = "zeroconf-browser-example"
 version = "0.1.0"
 dependencies = [
  "clap",
  "env_logger",
+ "izeroconf",
  "log",
- "zeroconf",
 ]
 
 [[package]]
@@ -1031,6 +1031,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "env_logger",
+ "izeroconf",
  "log",
- "zeroconf",
 ]

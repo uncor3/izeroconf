@@ -14,7 +14,7 @@ use super::bonjour_util;
 
 /// Wraps the `ManagedTXTRecordRef` type from the raw Bonjour bindings.
 ///
-/// `zeroconf::TxtRecord` provides the cross-platform bindings for this functionality.
+/// `izeroconf::TxtRecord` provides the cross-platform bindings for this functionality.
 pub struct ManagedTXTRecordRef(TXTRecordRef);
 
 impl ManagedTXTRecordRef {

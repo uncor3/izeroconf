@@ -25,8 +25,8 @@
 //! use std::any::Any;
 //! use std::sync::{Arc, Mutex};
 //! use std::time::Duration;
-//! use zeroconf::prelude::*;
-//! use zeroconf::{MdnsService, ServiceRegistration, ServiceType, TxtRecord};
+//! use izeroconf::prelude::*;
+//! use izeroconf::{MdnsService, ServiceRegistration, ServiceType, TxtRecord};
 //!
 //! #[derive(Parser, Debug)]
 //! #[command(author, version, about)]
@@ -49,7 +49,7 @@
 //!     service_name: String,
 //! }
 //!
-//! fn main() -> zeroconf::Result<()> {
+//! fn main() -> izeroconf::Result<()> {
 //!     env_logger::init();
 //!
 //!     let Args {
@@ -80,7 +80,7 @@
 //! }
 //!
 //! fn on_service_registered(
-//!     result: zeroconf::Result<ServiceRegistration>,
+//!     result: izeroconf::Result<ServiceRegistration>,
 //!     context: Option<Arc<dyn Any + Send + Sync>>,
 //! ) {
 //!     let service = result.expect("failed to register service");
@@ -115,8 +115,8 @@
 //! use std::any::Any;
 //! use std::sync::Arc;
 //! use std::time::Duration;
-//! use zeroconf::prelude::*;
-//! use zeroconf::{BrowserEvent, MdnsBrowser, ServiceDiscovery, ServiceRemoval, ServiceType};
+//! use izeroconf::prelude::*;
+//! use izeroconf::{BrowserEvent, MdnsBrowser, ServiceDiscovery, ServiceRemoval, ServiceType};
 //!
 //! /// Example of a simple mDNS browser
 //! #[derive(Parser, Debug)]
@@ -135,7 +135,7 @@
 //!     sub_type: Option<String>,
 //! }
 //!
-//! fn main() -> zeroconf::Result<()> {
+//! fn main() -> izeroconf::Result<()> {
 //!     env_logger::init();
 //!
 //!     let Args {
@@ -165,7 +165,7 @@
 //! }
 //!
 //! fn on_service_event(
-//!     result: zeroconf::Result<BrowserEvent>,
+//!     result: izeroconf::Result<BrowserEvent>,
 //!     _context: Option<Arc<dyn Any + Send + Sync>>,
 //! ) {
 //!     info!(

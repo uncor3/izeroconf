@@ -5,7 +5,7 @@ authors = ["Walker Crouse <walkercrouse@hotmail.com>"]
 edition = "2024"
 
 [dependencies]
-zeroconf = { path = "../../zeroconf" }
+zeroconf = { package = "izeroconf", path = "../../zeroconf" }
 env_logger = "0.10.0"
 log = "0.4.20"
 clap = { version = "4.4.4", features = ["derive"] }

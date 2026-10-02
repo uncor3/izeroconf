@@ -13,7 +13,7 @@ use std::ptr;
 
 /// Wraps the `AvahiStringList` pointer from the raw Avahi bindings.
 ///
-/// `zeroconf::TxtRecord` provides the cross-platform bindings for this functionality.
+/// `izeroconf::TxtRecord` provides the cross-platform bindings for this functionality.
 #[derive(Debug)]
 pub struct ManagedAvahiStringList(*mut AvahiStringList);
 

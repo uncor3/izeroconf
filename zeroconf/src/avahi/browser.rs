@@ -31,7 +31,6 @@ use std::net::{IpAddr, SocketAddr, SocketAddrV6};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::{fmt, ptr};
-use std::ffi::c_char;
 
 #[derive(Debug)]
 pub struct AvahiMdnsBrowser {
