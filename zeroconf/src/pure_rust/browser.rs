@@ -7,6 +7,8 @@ use mdns_sd::{IfKind, ServiceDaemon};
 use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
+use std::ffi::c_char;
+
 
 pub struct PureRustMdnsBrowser {
     service_type: ServiceType,
