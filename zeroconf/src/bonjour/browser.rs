@@ -13,12 +13,12 @@ use crate::{
     BrowserEvent, DeviceMetadataResolution, DiscoveryBackend, DiscoveryTxtRecord,
     ServiceBrowserCallback, ServiceDiscovery, ServiceRemoval,
 };
+use std::ffi::{c_char, c_uchar, c_void};
 use crate::{NetworkInterface, Result, ServiceType};
 #[cfg(target_vendor = "pc")]
 use bonjour_sys::sockaddr_in;
 use bonjour_sys::{DNSServiceErrorType, DNSServiceFlags, DNSServiceRef};
-#[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
-use libc::{c_char, c_uchar, c_void};
+
 #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
 use libc::{sockaddr_in, sockaddr_in6};
 use std::any::Any;
